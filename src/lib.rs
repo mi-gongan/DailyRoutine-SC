@@ -444,21 +444,17 @@ impl DailyRoutine {
      * Authority
      * ===========
      */
-    // owner를 체크하는 함수
     fn check_owner(&self) {
         if !self.is_owner(env::predecessor_account_id()) {
             env::panic_str("Caller is not the owner.");
         }
     }
 
-    // 모더레이터를 추가하는 함수
     pub fn add_moderator(&mut self, moderator: AccountId) {
-        // 오직 오너만이 모더레이터를 추가할 수 있음
         self.check_owner();
         self.moderators.add_moderator(&moderator);
     }
-
-    // verify 함수를 호출하기 위한 모더레이터 권한 검사
+    
     fn check_moderator(&self, account_id: &AccountId) {
         if !self.moderators.is_moderator(account_id) {
             env::panic_str("Caller is not a moderator.");
