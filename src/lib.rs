@@ -1,9 +1,9 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::env::log_str;
-use std::ops::Div;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Promise};
+use std::ops::Div;
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -168,7 +168,8 @@ impl DailyRoutine {
     pub fn get_total_betting_amount(&self, challenge_id: u128) -> u128 {
         self.total_betting_amount
             .get(&challenge_id)
-            .unwrap_or_default().div(1_000_000_000_000_000_000_000_000)
+            .unwrap_or_default()
+            .div(1_000_000_000_000_000_000_000_000)
     }
 
     #[payable]
@@ -541,10 +542,10 @@ mod tests {
 
         // Call the `participate` function
         contract.participate(challenge_id, value);
-        
+
         testing_env!(owner_context.clone());
-        
-        contract.participate(challenge_id, value*2);
+
+        contract.participate(challenge_id, value * 2);
 
         // Assert the changes in contract state
         let participants: Vec<AccountId> =
@@ -566,7 +567,11 @@ mod tests {
             .get(&challenge_id)
             .unwrap()
             .div(1_000_000_000_000_000_000_000_000);
-        assert_eq!(total_betting_amount, value*3, "total betting amount not updated");
+        assert_eq!(
+            total_betting_amount,
+            value * 3,
+            "total betting amount not updated"
+        );
     }
 
     #[test]
