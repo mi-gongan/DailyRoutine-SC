@@ -2,7 +2,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::env::log_str;
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, near_bindgen, AccountId, Promise, PanicOnDefault};
+use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Promise};
 
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -29,7 +29,7 @@ impl Moderators {
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
-pub struct BiDaily {
+pub struct DailyRoutine {
     moderator_require_amount: u128,
     platform_fee: u128,
     /**
@@ -114,7 +114,7 @@ pub struct CheckUnit {
 }
 
 #[near_bindgen]
-impl BiDaily {
+impl DailyRoutine {
     #[init]
     pub fn new(owner_id: AccountId) -> Self {
         Self {
@@ -136,16 +136,22 @@ impl BiDaily {
     }
 
     pub fn setting(&mut self, moderator_require_amount: u128, platform_fee: u128) {
+        self.check_owner();
         self.moderator_require_amount = moderator_require_amount;
         self.platform_fee = platform_fee;
     }
 
     pub fn challenge_setting(&mut self, challenge_id: u128, challenge_info: ChallengeInfo) {
+        self.check_owner();
         self.challenge_info.insert(&challenge_id, &challenge_info);
     }
 
     pub fn get_challenge_info(&self, challenge_id: u128) -> ChallengeInfo {
         self.challenge_info.get(&challenge_id).unwrap()
+    }
+
+    pub fn get_participants(&self, challenge_id: u128) -> Vec<AccountId> {
+        self.participants.get(&challenge_id).unwrap_or_default()
     }
 
     pub fn get_platform_fee(&self) -> u128 {
@@ -192,7 +198,9 @@ impl BiDaily {
             "price is not proper"
         );
 
-        self.receive_tokens(value);
+        let real_value = value * 1_000_000_000_000_000_000_000_000;
+
+        Promise::new(self.owner.clone()).transfer(real_value.clone());
 
         let participants = self.participants.get(&challenge_id);
 
@@ -208,21 +216,22 @@ impl BiDaily {
         if let Some(mut amount_map) = betting_amount_map {
             let betting_amount = amount_map.get(&env::predecessor_account_id());
             if let Some(mut _amount) = betting_amount {
-                _amount = value;
+                _amount = real_value.clone();
             } else {
-                amount_map.insert(&env::predecessor_account_id(), &value);
+                amount_map.insert(&env::predecessor_account_id(), &real_value.clone());
             }
         } else {
             let mut new_amount_map = UnorderedMap::new(b"l");
-            new_amount_map.insert(&env::predecessor_account_id(), &value);
+            new_amount_map.insert(&env::predecessor_account_id(), &real_value.clone());
             self.betting_amount.insert(&challenge_id, &new_amount_map);
         }
         //total betting amount
         let total_betting_amount = self.total_betting_amount.get(&challenge_id);
         if let Some(mut _amount) = total_betting_amount {
-            _amount += value;
+            _amount += real_value.clone();
         } else {
-            self.total_betting_amount.insert(&challenge_id, &value);
+            self.total_betting_amount
+                .insert(&challenge_id, &real_value.clone());
         }
         //participated challenge ids
         let participated_challenge_ids = self
@@ -270,14 +279,15 @@ impl BiDaily {
 
             // execute_count
             let mut _execute_count = self.execute_count.get(&challenge_id).unwrap_or_else(|| {
-                let prefix = near_sdk::env::sha256_array(format!("excute{}", challenge_id).as_bytes());
+                let prefix =
+                    near_sdk::env::sha256_array(format!("excute{}", challenge_id).as_bytes());
                 let prefix_slice: &[u8] = &prefix[..];
                 let inner_map = UnorderedMap::new(prefix_slice);
                 self.execute_count.insert(&challenge_id, &inner_map);
                 inner_map
             });
 
-            let mut execute_count_ = match _execute_count.get(&user){
+            let mut execute_count_ = match _execute_count.get(&user) {
                 Some(count) => count,
                 None => 0,
             };
@@ -287,13 +297,14 @@ impl BiDaily {
 
             // verify_count
             let mut _verify_count = self.verify_count.get(&challenge_id).unwrap_or_else(|| {
-                let prefix = near_sdk::env::sha256_array(format!("verify{}", challenge_id).as_bytes());
+                let prefix =
+                    near_sdk::env::sha256_array(format!("verify{}", challenge_id).as_bytes());
                 let prefix_slice: &[u8] = &prefix[..];
                 let inner_map = UnorderedMap::new(prefix_slice);
                 self.verify_count.insert(&challenge_id, &inner_map);
                 inner_map
             });
-            let mut verify_count_ =match _verify_count.get(&moderator){
+            let mut verify_count_ = match _verify_count.get(&moderator) {
                 Some(count) => count,
                 None => 0,
             };
@@ -317,10 +328,8 @@ impl BiDaily {
 
     #[payable]
     pub fn settle_winner(&mut self, challenge_id: u128) {
-        // assert!(
-        //     self.challenge_info[&challenge_id].end_time < env::block_timestamp(),
-        //     "challenge is not over"
-        // );
+        self.check_owner();
+
         let mut spent_amount: u128 = 0;
         let mut lost_amount: u128 = 0;
         let total_amount = self.total_betting_amount.get(&challenge_id);
@@ -410,13 +419,17 @@ impl BiDaily {
      * Authority
      * ===========
      */
+    // owner를 체크하는 함수
+    fn check_owner(&self) {
+        if !self.is_owner(env::predecessor_account_id()) {
+            env::panic_str("Caller is not the owner.");
+        }
+    }
+
     // 모더레이터를 추가하는 함수
     pub fn add_moderator(&mut self, moderator: AccountId) {
         // 오직 오너만이 모더레이터를 추가할 수 있음
-        assert!(
-            self.is_owner(env::predecessor_account_id()),
-            "Only the owner can add a moderator."
-        );
+        self.check_owner();
         self.moderators.add_moderator(&moderator);
     }
 
@@ -446,14 +459,6 @@ impl BiDaily {
         );
         self.owner = new_owner;
     }
-
-    /**
-     * ===========
-     * receive
-     * ===========
-     */
-    #[payable]
-    pub fn receive_tokens(&mut self, amount: u128) {}
 }
 
 #[cfg(test)]
@@ -469,23 +474,32 @@ mod tests {
         builder.signer_account_id(accounts(0));
         builder.current_account_id(accounts(0));
         builder.predecessor_account_id(accounts(0));
-        builder.account_balance(100000000000000000000000000);
+        builder.account_balance(10 * 10u128.pow(26));
+        builder
+    }
+
+    fn bob_context() -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder.signer_account_id(accounts(1));
+        builder.current_account_id(accounts(1));
+        builder.predecessor_account_id(accounts(1));
+        builder.account_balance(10 * 10u128.pow(26));
         builder
     }
 
     #[test]
     fn test_participate() {
-        let context = basic_context().build();
-        testing_env!(context);
+        let owner_context = basic_context().build();
+        testing_env!(owner_context);
 
-        let mut contract = BiDaily::default();
+        let mut contract = DailyRoutine::new(accounts(0));
         contract.setting(100, 10);
 
         let challenge_id = 1;
         let current_timestamp = env::block_timestamp();
         let challenge_info = ChallengeInfo {
             max_betting_price: 1000,
-            min_betting_price: 100,
+            min_betting_price: 10,
             max_participants: 10,
             failers_retrieve_ratio: 50,
             success_condition: 5,
@@ -497,6 +511,10 @@ mod tests {
 
         let value = 100;
 
+        let bob_context = bob_context().build();
+
+        testing_env!(bob_context);
+
         // Call the `participate` function
         contract.participate(challenge_id, value);
 
@@ -504,29 +522,29 @@ mod tests {
         let participants = contract.participants.get(&challenge_id).unwrap_or_default();
         assert_eq!(participants.len(), 1);
 
-        assert_eq!(participants[0], accounts(0));
+        assert_eq!(participants[0], accounts(1));
 
         let betting_amount = contract.betting_amount.get(&challenge_id).unwrap();
         assert_eq!(
-            betting_amount.get(&accounts(0)).clone().unwrap(),
-            value,
+            betting_amount.get(&accounts(1)).clone().unwrap(),
+            value * 1_000_000_000_000_000_000_000_000,
             "betting amount not updated"
         );
     }
 
     #[test]
     fn test_verify() {
-        let context = basic_context().build();
-        testing_env!(context);
+        let owner_context = basic_context().build();
+        testing_env!(owner_context.clone());
 
-        let mut contract = BiDaily::default();
+        let mut contract = DailyRoutine::new(accounts(0));
         contract.setting(100, 10);
 
         let challenge_id = 1;
         let current_timestamp = env::block_timestamp();
         let challenge_info = ChallengeInfo {
             max_betting_price: 1000,
-            min_betting_price: 100,
+            min_betting_price: 10,
             max_participants: 10,
             failers_retrieve_ratio: 50,
             success_condition: 5,
@@ -535,13 +553,16 @@ mod tests {
             end_time: current_timestamp + 1000,
         };
         contract.challenge_setting(challenge_id, challenge_info);
-        let moderator = accounts(1);
-        let user = accounts(0);
+        let moderator = accounts(0);
+        let user = accounts(1);
         let index = 0;
 
         // Add moderator
         contract.add_moderator(moderator.clone());
 
+        let bob_context = bob_context().build();
+
+        testing_env!(bob_context);
         // Participate in the challenge
         contract.participate(challenge_id, 100);
 
@@ -551,6 +572,8 @@ mod tests {
             user: user.clone(),
             index,
         }];
+
+        testing_env!(owner_context.clone());
         contract.verify(moderator.clone(), verify_units);
 
         // Assert the changes in contract state
@@ -573,15 +596,15 @@ mod tests {
 
     #[test]
     fn test_settle_winner() {
-        let context = basic_context().block_timestamp(100).build();
-        testing_env!(context);
+        let owner_context = basic_context().build();
+        testing_env!(owner_context.clone());
 
-        let mut contract = BiDaily::default();
+        let mut contract = DailyRoutine::new(accounts(0));
         let challenge_id = 1;
         let current_timestamp = env::block_timestamp();
         let challenge_info = ChallengeInfo {
             max_betting_price: 1000,
-            min_betting_price: 100,
+            min_betting_price: 10,
             max_participants: 10,
             failers_retrieve_ratio: 50,
             success_condition: 5,
@@ -590,14 +613,25 @@ mod tests {
             end_time: current_timestamp + 1,
         };
         contract.challenge_setting(challenge_id, challenge_info);
-        let user = accounts(0);
+
+        let user = accounts(1);
+
+        let bob_context = bob_context().build();
+
+        testing_env!(bob_context.clone());
+
+        let balance = env::account_balance();
+        log_str(format!("balance: {}", balance).as_str());
 
         // Participate in the challenge
         contract.participate(challenge_id, 100);
-        let moderator = accounts(1);
+        let moderator = accounts(0);
         let index = 0;
-
+        let balance = env::account_balance();
+        log_str(format!("balance: {}", balance).as_str());
         // Add moderator
+
+        testing_env!(owner_context.clone());
         contract.add_moderator(moderator.clone());
         // Verify the participant
         let verify_units = vec![VerifyUnit {
@@ -605,6 +639,7 @@ mod tests {
             user: user.clone(),
             index,
         }];
+
         contract.verify(moderator.clone(), verify_units);
         // Settle the winner
         contract.settle_winner(challenge_id);
@@ -617,5 +652,13 @@ mod tests {
             .get(&user)
             .unwrap();
         assert_eq!(execute_count, 1, "execute count not updated");
+
+        //balance check
+        let balance = env::account_balance();
+        log_str(format!("balance: {}", balance).as_str());
+
+        testing_env!(bob_context.clone());
+        let balance = env::account_balance();
+        log_str(format!("balance: {}", balance).as_str());
     }
 }
