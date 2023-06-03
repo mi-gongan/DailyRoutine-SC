@@ -158,6 +158,18 @@ impl DailyRoutine {
         self.platform_fee.clone()
     }
 
+    pub fn get_participated_challenge_ids(&self, account_id: &AccountId) -> Vec<u128> {
+        self.participated_challenge_ids
+            .get(&account_id.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn get_total_betting_amount(&self, challenge_id: u128) -> u128 {
+        self.total_betting_amount
+            .get(&challenge_id)
+            .unwrap_or_default()
+    }
+
     #[payable]
     pub fn participate(&mut self, challenge_id: u128, value: u128) {
         assert!(
@@ -171,14 +183,14 @@ impl DailyRoutine {
             "participants are full"
         );
 
-        assert!(
-            self.challenge_info
-                .get(&challenge_id)
-                .map(|info| info.start_time <= env::block_timestamp()
-                    && env::block_timestamp() <= info.end_time)
-                .unwrap_or(false),
-            "challenge is not available"
-        );
+        // assert!(
+        //     self.challenge_info
+        //         .get(&challenge_id)
+        //         .map(|info| info.start_time <= env::block_timestamp()
+        //             && env::block_timestamp() <= info.end_time)
+        //         .unwrap_or(false),
+        //     "challenge is not available"
+        // );
 
         assert!(
             self.betting_amount
@@ -198,35 +210,39 @@ impl DailyRoutine {
             "price is not proper"
         );
 
-        let real_value = value * 1_000_000_000_000_000_000_000_000;
+        let real_value: u128 = value * 1_000_000_000_000_000_000_000_000;
 
         Promise::new(self.owner.clone()).transfer(real_value.clone());
 
-        let participants = self.participants.get(&challenge_id);
+        let participants: Option<Vec<AccountId>> = self.participants.get(&challenge_id);
 
         if let Some(mut participants) = participants {
             participants.push(env::predecessor_account_id());
         } else {
-            let mut new_participants = Vec::new();
+            let mut new_participants: Vec<AccountId> = Vec::new();
             new_participants.push(env::predecessor_account_id());
             self.participants.insert(&challenge_id, &new_participants);
         }
         //betting amount
-        let betting_amount_map = self.betting_amount.get(&challenge_id);
+        let betting_amount_map: Option<UnorderedMap<AccountId, u128>> =
+            self.betting_amount.get(&challenge_id);
         if let Some(mut amount_map) = betting_amount_map {
-            let betting_amount = amount_map.get(&env::predecessor_account_id());
+            let betting_amount: Option<u128> = amount_map.get(&env::predecessor_account_id());
             if let Some(mut _amount) = betting_amount {
                 _amount = real_value.clone();
             } else {
                 amount_map.insert(&env::predecessor_account_id(), &real_value.clone());
             }
         } else {
-            let mut new_amount_map = UnorderedMap::new(b"l");
+            let prefix: [u8; 32] =
+                near_sdk::env::sha256_array(format!("betting amount {}", challenge_id).as_bytes());
+            let prefix_slice: &[u8] = &prefix[..];
+            let mut new_amount_map = UnorderedMap::new(prefix_slice);
             new_amount_map.insert(&env::predecessor_account_id(), &real_value.clone());
             self.betting_amount.insert(&challenge_id, &new_amount_map);
         }
         //total betting amount
-        let total_betting_amount = self.total_betting_amount.get(&challenge_id);
+        let total_betting_amount: Option<u128> = self.total_betting_amount.get(&challenge_id);
         if let Some(mut _amount) = total_betting_amount {
             _amount += real_value.clone();
         } else {
@@ -234,13 +250,13 @@ impl DailyRoutine {
                 .insert(&challenge_id, &real_value.clone());
         }
         //participated challenge ids
-        let participated_challenge_ids = self
+        let participated_challenge_ids: Option<Vec<u128>> = self
             .participated_challenge_ids
             .get(&env::predecessor_account_id());
         if let Some(mut _ids) = participated_challenge_ids {
             _ids.push(challenge_id);
         } else {
-            let mut new_ids = Vec::new();
+            let mut new_ids: Vec<u128> = Vec::new();
             new_ids.push(challenge_id);
             self.participated_challenge_ids
                 .insert(&env::predecessor_account_id(), &new_ids);
@@ -250,15 +266,15 @@ impl DailyRoutine {
     pub fn verify(&mut self, moderator: AccountId, verify_units: Vec<VerifyUnit>) {
         self.check_moderator(&moderator);
         for verify_unit in verify_units {
-            let challenge_id = verify_unit.challenge_id;
-            let user = verify_unit.user;
-            let index = verify_unit.index;
+            let challenge_id: u128 = verify_unit.challenge_id;
+            let user: AccountId = verify_unit.user;
+            let index: u128 = verify_unit.index;
 
             // TODO(not test)
             // let calculated_hash = near_sdk::env::keccak256(
             //     format!("{}{}{}{}", moderator, challenge_id, user, index).as_bytes(),
             // );
-            let calculated_hash =
+            let calculated_hash: Vec<u8> =
                 near_sdk::env::keccak256(format!("{}{}{}", challenge_id, user, index).as_bytes());
 
             assert!(
@@ -278,16 +294,17 @@ impl DailyRoutine {
             // TODO(not test): verified_count => if over specific count, then execute_count++
 
             // execute_count
-            let mut _execute_count = self.execute_count.get(&challenge_id).unwrap_or_else(|| {
-                let prefix =
-                    near_sdk::env::sha256_array(format!("excute{}", challenge_id).as_bytes());
-                let prefix_slice: &[u8] = &prefix[..];
-                let inner_map = UnorderedMap::new(prefix_slice);
-                self.execute_count.insert(&challenge_id, &inner_map);
-                inner_map
-            });
+            let mut _execute_count: UnorderedMap<AccountId, u128> =
+                self.execute_count.get(&challenge_id).unwrap_or_else(|| {
+                    let prefix: [u8; 32] =
+                        near_sdk::env::sha256_array(format!("excute{}", challenge_id).as_bytes());
+                    let prefix_slice: &[u8] = &prefix[..];
+                    let inner_map: UnorderedMap<AccountId, u128> = UnorderedMap::new(prefix_slice);
+                    self.execute_count.insert(&challenge_id, &inner_map);
+                    inner_map
+                });
 
-            let mut execute_count_ = match _execute_count.get(&user) {
+            let mut execute_count_: u128 = match _execute_count.get(&user) {
                 Some(count) => count,
                 None => 0,
             };
@@ -296,15 +313,16 @@ impl DailyRoutine {
             self.execute_count.insert(&challenge_id, &_execute_count);
 
             // verify_count
-            let mut _verify_count = self.verify_count.get(&challenge_id).unwrap_or_else(|| {
-                let prefix =
-                    near_sdk::env::sha256_array(format!("verify{}", challenge_id).as_bytes());
-                let prefix_slice: &[u8] = &prefix[..];
-                let inner_map = UnorderedMap::new(prefix_slice);
-                self.verify_count.insert(&challenge_id, &inner_map);
-                inner_map
-            });
-            let mut verify_count_ = match _verify_count.get(&moderator) {
+            let mut _verify_count: UnorderedMap<AccountId, u128> =
+                self.verify_count.get(&challenge_id).unwrap_or_else(|| {
+                    let prefix: [u8; 32] =
+                        near_sdk::env::sha256_array(format!("verify{}", challenge_id).as_bytes());
+                    let prefix_slice: &[u8] = &prefix[..];
+                    let inner_map: UnorderedMap<AccountId, u128> = UnorderedMap::new(prefix_slice);
+                    self.verify_count.insert(&challenge_id, &inner_map);
+                    inner_map
+                });
+            let mut verify_count_: u128 = match _verify_count.get(&moderator) {
                 Some(count) => count,
                 None => 0,
             };
@@ -332,23 +350,23 @@ impl DailyRoutine {
 
         let mut spent_amount: u128 = 0;
         let mut lost_amount: u128 = 0;
-        let total_amount = self.total_betting_amount.get(&challenge_id);
+        let total_amount: Option<u128> = self.total_betting_amount.get(&challenge_id);
 
-        let challenge_info = &self.challenge_info.get(&challenge_id);
+        let challenge_info: &Option<ChallengeInfo> = &self.challenge_info.get(&challenge_id);
         let mut winners: Vec<Option<AccountId>> = vec![None; 100];
 
-        let participants = self.participants.get(&challenge_id).clone();
+        let participants: Option<Vec<AccountId>> = self.participants.get(&challenge_id).clone();
 
         for participant in participants.unwrap_or_default().iter() {
-            let betting_amount = self
+            let betting_amount: u128 = self
                 .betting_amount
                 .get(&challenge_id)
-                .and_then(|map| map.get(participant))
+                .and_then(|map: UnorderedMap<AccountId, u128>| map.get(participant))
                 .unwrap_or_default();
             let execute_count = self
                 .execute_count
                 .get(&challenge_id)
-                .and_then(|map| map.get(participant))
+                .and_then(|map: UnorderedMap<AccountId, u128>| map.get(participant))
                 .unwrap_or_default();
             if execute_count >= challenge_info.as_ref().unwrap().success_condition as u128 {
                 winners.push(Some(participant.clone()));
@@ -372,10 +390,10 @@ impl DailyRoutine {
 
         for winner in winners.iter() {
             if let Some(account_id) = winner {
-                let betting_amount = self
+                let betting_amount: u128 = self
                     .betting_amount
                     .get(&challenge_id)
-                    .and_then(|map| map.get(account_id))
+                    .and_then(|map: UnorderedMap<AccountId, u128>| map.get(account_id))
                     .unwrap_or_default();
                 // Winner takes not only the bet amount but also the loser amount as much as the bet rate
                 Promise::new(account_id.clone()).transfer(
@@ -386,10 +404,10 @@ impl DailyRoutine {
             }
         }
 
-        let moderators = self.get_moderators();
+        let moderators: Vec<AccountId> = self.get_moderators();
         let verify_count_sum: u128 = moderators
             .iter()
-            .map(|m| {
+            .map(|m: &AccountId| {
                 self.verify_count
                     .get(&challenge_id)
                     .unwrap()
@@ -399,7 +417,7 @@ impl DailyRoutine {
             .sum();
 
         for moderator in moderators.iter() {
-            let transfer_amount = ((total_amount.unwrap() - spent_amount)
+            let transfer_amount: u128 = ((total_amount.unwrap() - spent_amount)
                 * self
                     .verify_count
                     .get(&challenge_id)
@@ -470,7 +488,7 @@ mod tests {
 
     // Sets up a basic context for testing.
     fn basic_context() -> VMContextBuilder {
-        let mut builder = VMContextBuilder::new();
+        let mut builder: VMContextBuilder = VMContextBuilder::new();
         builder.signer_account_id(accounts(0));
         builder.current_account_id(accounts(0));
         builder.predecessor_account_id(accounts(0));
@@ -479,7 +497,7 @@ mod tests {
     }
 
     fn bob_context() -> VMContextBuilder {
-        let mut builder = VMContextBuilder::new();
+        let mut builder: VMContextBuilder = VMContextBuilder::new();
         builder.signer_account_id(accounts(1));
         builder.current_account_id(accounts(1));
         builder.predecessor_account_id(accounts(1));
@@ -489,15 +507,15 @@ mod tests {
 
     #[test]
     fn test_participate() {
-        let owner_context = basic_context().build();
+        let owner_context: near_sdk::VMContext = basic_context().build();
         testing_env!(owner_context);
 
-        let mut contract = DailyRoutine::new(accounts(0));
+        let mut contract: DailyRoutine = DailyRoutine::new(accounts(0));
         contract.setting(100, 10);
 
-        let challenge_id = 1;
-        let current_timestamp = env::block_timestamp();
-        let challenge_info = ChallengeInfo {
+        let challenge_id: u128 = 1;
+        let current_timestamp: u64 = env::block_timestamp();
+        let challenge_info: ChallengeInfo = ChallengeInfo {
             max_betting_price: 1000,
             min_betting_price: 10,
             max_participants: 10,
@@ -509,9 +527,9 @@ mod tests {
         };
         contract.challenge_setting(challenge_id, challenge_info);
 
-        let value = 100;
+        let value: u128 = 100;
 
-        let bob_context = bob_context().build();
+        let bob_context: near_sdk::VMContext = bob_context().build();
 
         testing_env!(bob_context);
 
@@ -519,12 +537,14 @@ mod tests {
         contract.participate(challenge_id, value);
 
         // Assert the changes in contract state
-        let participants = contract.participants.get(&challenge_id).unwrap_or_default();
+        let participants: Vec<AccountId> =
+            contract.participants.get(&challenge_id).unwrap_or_default();
         assert_eq!(participants.len(), 1);
 
         assert_eq!(participants[0], accounts(1));
 
-        let betting_amount = contract.betting_amount.get(&challenge_id).unwrap();
+        let betting_amount: UnorderedMap<AccountId, u128> =
+            contract.betting_amount.get(&challenge_id).unwrap();
         assert_eq!(
             betting_amount.get(&accounts(1)).clone().unwrap(),
             value * 1_000_000_000_000_000_000_000_000,
@@ -534,15 +554,15 @@ mod tests {
 
     #[test]
     fn test_verify() {
-        let owner_context = basic_context().build();
+        let owner_context: near_sdk::VMContext = basic_context().build();
         testing_env!(owner_context.clone());
 
-        let mut contract = DailyRoutine::new(accounts(0));
+        let mut contract: DailyRoutine = DailyRoutine::new(accounts(0));
         contract.setting(100, 10);
 
-        let challenge_id = 1;
-        let current_timestamp = env::block_timestamp();
-        let challenge_info = ChallengeInfo {
+        let challenge_id: u128 = 1;
+        let current_timestamp: u64 = env::block_timestamp();
+        let challenge_info: ChallengeInfo = ChallengeInfo {
             max_betting_price: 1000,
             min_betting_price: 10,
             max_participants: 10,
@@ -553,21 +573,21 @@ mod tests {
             end_time: current_timestamp + 1000,
         };
         contract.challenge_setting(challenge_id, challenge_info);
-        let moderator = accounts(0);
-        let user = accounts(1);
-        let index = 0;
+        let moderator: AccountId = accounts(0);
+        let user: AccountId = accounts(1);
+        let index: u128 = 0;
 
         // Add moderator
         contract.add_moderator(moderator.clone());
 
-        let bob_context = bob_context().build();
+        let bob_context: near_sdk::VMContext = bob_context().build();
 
         testing_env!(bob_context);
         // Participate in the challenge
         contract.participate(challenge_id, 100);
 
         // Verify the participant
-        let verify_units = vec![VerifyUnit {
+        let verify_units: Vec<VerifyUnit> = vec![VerifyUnit {
             challenge_id,
             user: user.clone(),
             index,
