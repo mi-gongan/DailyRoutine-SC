@@ -1,6 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::env::log_str;
+use std::ops::Div;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Promise};
 
@@ -167,7 +168,7 @@ impl DailyRoutine {
     pub fn get_total_betting_amount(&self, challenge_id: u128) -> u128 {
         self.total_betting_amount
             .get(&challenge_id)
-            .unwrap_or_default()
+            .unwrap_or_default().div(1_000_000_000_000_000_000_000_000)
     }
 
     #[payable]
@@ -218,6 +219,7 @@ impl DailyRoutine {
 
         if let Some(mut participants) = participants {
             participants.push(env::predecessor_account_id());
+            self.participants.insert(&challenge_id, &participants);
         } else {
             let mut new_participants: Vec<AccountId> = Vec::new();
             new_participants.push(env::predecessor_account_id());
@@ -233,6 +235,7 @@ impl DailyRoutine {
             } else {
                 amount_map.insert(&env::predecessor_account_id(), &real_value.clone());
             }
+            self.betting_amount.insert(&challenge_id, &amount_map);
         } else {
             let prefix: [u8; 32] =
                 near_sdk::env::sha256_array(format!("betting amount {}", challenge_id).as_bytes());
@@ -245,6 +248,7 @@ impl DailyRoutine {
         let total_betting_amount: Option<u128> = self.total_betting_amount.get(&challenge_id);
         if let Some(mut _amount) = total_betting_amount {
             _amount += real_value.clone();
+            self.total_betting_amount.insert(&challenge_id, &_amount);
         } else {
             self.total_betting_amount
                 .insert(&challenge_id, &real_value.clone());
@@ -255,6 +259,8 @@ impl DailyRoutine {
             .get(&env::predecessor_account_id());
         if let Some(mut _ids) = participated_challenge_ids {
             _ids.push(challenge_id);
+            self.participated_challenge_ids
+                .insert(&env::predecessor_account_id(), &_ids);
         } else {
             let mut new_ids: Vec<u128> = Vec::new();
             new_ids.push(challenge_id);
@@ -508,7 +514,7 @@ mod tests {
     #[test]
     fn test_participate() {
         let owner_context: near_sdk::VMContext = basic_context().build();
-        testing_env!(owner_context);
+        testing_env!(owner_context.clone());
 
         let mut contract: DailyRoutine = DailyRoutine::new(accounts(0));
         contract.setting(100, 10);
@@ -535,11 +541,15 @@ mod tests {
 
         // Call the `participate` function
         contract.participate(challenge_id, value);
+        
+        testing_env!(owner_context.clone());
+        
+        contract.participate(challenge_id, value*2);
 
         // Assert the changes in contract state
         let participants: Vec<AccountId> =
             contract.participants.get(&challenge_id).unwrap_or_default();
-        assert_eq!(participants.len(), 1);
+        assert_eq!(participants.len(), 2);
 
         assert_eq!(participants[0], accounts(1));
 
@@ -550,6 +560,13 @@ mod tests {
             value * 1_000_000_000_000_000_000_000_000,
             "betting amount not updated"
         );
+        //check total betting amount
+        let total_betting_amount: u128 = contract
+            .total_betting_amount
+            .get(&challenge_id)
+            .unwrap()
+            .div(1_000_000_000_000_000_000_000_000);
+        assert_eq!(total_betting_amount, value*3, "total betting amount not updated");
     }
 
     #[test]
